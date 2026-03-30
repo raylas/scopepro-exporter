@@ -1,0 +1,61 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: cachix/install-nix-action@v31
+      - run: nix develop --command go test ./...
+
+  build-push:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: cachix/install-nix-action@v31
+      - run: |
+          nix build .#image
+          gunzip -c "$(readlink -f result)" > image.tar
+      - run: |
+          IMAGE=ghcr.io/${{ github.repository }}
+          SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          nix shell nixpkgs#crane -c crane auth login ghcr.io -u ${{ github.actor }} --password-stdin <<< "$GITHUB_TOKEN"
+          nix shell nixpkgs#crane -c crane push image.tar "$IMAGE:$SHA-${{ matrix.arch }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  manifest:
+    needs: build-push
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: cachix/install-nix-action@v31
+      - run: |
+          IMAGE=ghcr.io/${{ github.repository }}
+          SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          nix shell nixpkgs#crane -c crane auth login ghcr.io -u ${{ github.actor }} --password-stdin <<< "$GITHUB_TOKEN"
+          nix shell nixpkgs#crane -c crane index append \
+            --manifest "$IMAGE:$SHA-amd64" \
+            --manifest "$IMAGE:$SHA-arm64" \
+            --tag "$IMAGE:$SHA" \
+            --tag "$IMAGE:latest"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
