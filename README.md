@@ -67,7 +67,7 @@ The Nix-built image contains only the exporter binary. Since the exporter shells
 ```dockerfile
 FROM ghcr.io/raylas/scopepro-exporter:latest AS exporter
 
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 RUN apt-get update \
     && apt-get install -y --no-install-recommends software-properties-common \
     && add-apt-repository ppa:transcend-rd/scopepro-cli \

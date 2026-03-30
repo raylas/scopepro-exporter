@@ -33,11 +33,13 @@
                 inherit version;
                 src = ./.;
                 vendorHash = "sha256-P3sqF5a8mpwnD2wKoxVtwesNGINQonrj36NNKxZ6/3Q=";
+                env.CGO_ENABLED = "0";
                 ldflags = [
                   "-s"
                   "-w"
                   "-X main.version=${version}"
                 ];
+                flags = [ "-trimpath" ];
                 subPackages = [ "cmd/scopepro-exporter" ];
               };
             }

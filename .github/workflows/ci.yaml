@@ -3,6 +3,7 @@ name: build
 on:
   push:
     branches: [main]
+    tags: ["*"]
   pull_request:
 
 jobs:
@@ -15,7 +16,7 @@ jobs:
 
   build-push:
     needs: test
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
     strategy:
       matrix:
         include:
@@ -42,7 +43,7 @@ jobs:
 
   manifest:
     needs: build-push
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -57,5 +58,42 @@ jobs:
             --manifest "$IMAGE:$SHA-arm64" \
             --tag "$IMAGE:$SHA" \
             --tag "$IMAGE:latest"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-manifest:
+    needs: [release, manifest]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: cachix/install-nix-action@v31
+      - run: |
+          IMAGE=ghcr.io/${{ github.repository }}
+          TAG=${GITHUB_REF#refs/tags/}
+          nix shell nixpkgs#crane -c crane auth login ghcr.io -u ${{ github.actor }} --password-stdin <<< "$GITHUB_TOKEN"
+          nix shell nixpkgs#crane -c crane tag "$IMAGE:latest" "$TAG"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
