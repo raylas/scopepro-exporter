@@ -19,6 +19,7 @@ The exporter requires `scopepro` to be installed and accessible. It must run wit
 | `-log-level` | `info` | Log level (debug, info, warn, error) |
 | `-namespace` | `scopepro` | Metric namespace prefix |
 | `-scopepro-path` | `scopepro` | Path to the scopepro binary |
+| `-timeout` | `30s` | Timeout per scopepro invocation (`0` disables it) |
 
 ## Metrics
 

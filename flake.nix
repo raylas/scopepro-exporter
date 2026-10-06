@@ -32,7 +32,7 @@
                 pname = "scopepro-exporter";
                 inherit version;
                 src = ./.;
-                vendorHash = "sha256-P3sqF5a8mpwnD2wKoxVtwesNGINQonrj36NNKxZ6/3Q=";
+                vendorHash = "sha256-rTbaBWN0DWUg/tvpV+sTHPAfDFl0jwM/4HIFo/eV/jE=";
                 ldflags = [
                   "-s"
                   "-w"

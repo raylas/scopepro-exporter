@@ -3,13 +3,13 @@ package collector
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/raylas/scopepro-exporter/internal/scopepro"
-	"github.com/rs/zerolog"
 )
 
 type mockExecutor struct {
@@ -45,7 +45,6 @@ func TestCollect(t *testing.T) {
 			devices: []string{"/dev/sda"},
 			executor: &mockExecutor{
 				driveInfo: &scopepro.DriveInfo{
-					Device:    "/dev/sda",
 					Type:      "SSD",
 					Model:     "TS512GSSD470K",
 					Firmware:  "22Z2UCFS",
@@ -54,7 +53,7 @@ func TestCollect(t *testing.T) {
 				},
 				health: 100,
 				smart: map[string]float64{
-					"power_on_hours": 5520,
+					"power_on_hours":         5520,
 					"remain_life_percentage": 100,
 				},
 			},
@@ -92,7 +91,7 @@ scopepro_scrape_errors_total{device="/dev/sda"} 3
 			name:    "build info always present",
 			devices: []string{"/dev/sda"},
 			executor: &mockExecutor{
-				driveInfo: &scopepro.DriveInfo{Device: "/dev/sda", Type: "SSD"},
+				driveInfo: &scopepro.DriveInfo{Type: "SSD"},
 				health:    95,
 				smart:     map[string]float64{},
 			},
@@ -111,8 +110,7 @@ scopepro_build_info{version="dev"} 1
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			logger := zerolog.Nop()
-			c := New("scopepro", tt.devices, tt.executor, logger)
+			c := New("scopepro", "dev", tt.devices, tt.executor, slog.New(slog.DiscardHandler))
 
 			reg := prometheus.NewRegistry()
 			reg.MustRegister(c)

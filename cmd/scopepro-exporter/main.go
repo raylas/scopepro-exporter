@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,9 +16,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/raylas/scopepro-exporter/internal/collector"
 	"github.com/raylas/scopepro-exporter/internal/scopepro"
-	"github.com/rs/zerolog"
 )
 
+// version is set at build time via ldflags.
 var version = "dev"
 
 func run(ctx context.Context) error {
@@ -29,68 +30,59 @@ func run(ctx context.Context) error {
 	logLevel := flag.String("log-level", "info", "log level (debug, info, warn, error)")
 	namespace := flag.String("namespace", "scopepro", "metric namespace prefix")
 	scopeproPath := flag.String("scopepro-path", "scopepro", "path to scopepro binary")
+	timeout := flag.Duration("timeout", 30*time.Second, "timeout per scopepro invocation (0 to disable)")
 	flag.Parse()
 
-	if *devices == "" {
+	var devList []string
+	for dev := range strings.SplitSeq(*devices, ",") {
+		if dev = strings.TrimSpace(dev); dev != "" {
+			devList = append(devList, dev)
+		}
+	}
+	if len(devList) == 0 {
 		return fmt.Errorf("at least one device is required: -devices /dev/sda,/dev/nvme0n1")
 	}
 
-	// Logging
-	level, _ := zerolog.ParseLevel(*logLevel)
-	zerolog.SetGlobalLevel(level)
-	logger := zerolog.New(
-		zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.Stamp},
-	).With().Timestamp().Logger()
-
-	// Parse devices
-	devList := strings.Split(*devices, ",")
-	for i := range devList {
-		devList[i] = strings.TrimSpace(devList[i])
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(*logLevel)); err != nil {
+		return fmt.Errorf("invalid -log-level %q", *logLevel)
 	}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	// Build executor and collector
-	executor := scopepro.New(*scopeproPath)
-	collector.Version = version
-	c := collector.New(*namespace, devList, executor, logger)
+	executor := scopepro.New(*scopeproPath, *timeout)
+	c := collector.New(*namespace, version, devList, executor, logger)
 	prometheus.MustRegister(c)
 
-	// HTTP server
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/metrics", http.StatusMovedPermanently)
-	})
+	mux.Handle("/{$}", http.RedirectHandler("/metrics", http.StatusMovedPermanently))
 
 	srv := &http.Server{
-		Addr:    *addr,
-		Handler: mux,
+		Addr:              *addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	logger.Info().
-		Str("version", version).
-		Str("addr", *addr).
-		Strs("devices", devList).
-		Msg("starting scopepro exporter")
+	logger.Info("starting scopepro exporter", "version", version, "addr", *addr, "devices", devList)
 
-	// Graceful shutdown
 	go func() {
 		<-ctx.Done()
-		logger.Info().Msg("shutting down")
+		logger.Info("shutting down")
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
-		srv.Shutdown(shutdownCtx)
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			logger.Error("shutdown failed", "err", err)
+		}
 	}()
 
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("server error: %w", err)
 	}
-
 	return nil
 }
 
 func main() {
-	ctx := context.Background()
-	if err := run(ctx); err != nil {
+	if err := run(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}

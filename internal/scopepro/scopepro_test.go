@@ -149,15 +149,12 @@ func TestParseDriveInfo(t *testing.T) {
 	tests := []struct {
 		name   string
 		output string
-		device string
 		want   DriveInfo
 	}{
 		{
 			name:   "SSD drive info",
 			output: ssdDriveInfoOutput,
-			device: "/dev/sda",
 			want: DriveInfo{
-				Device:    "/dev/sda",
 				Type:      "SSD",
 				Model:     "TS512GSSD470K",
 				Firmware:  "22Z2UCFS",
@@ -168,9 +165,7 @@ func TestParseDriveInfo(t *testing.T) {
 		{
 			name:   "SD card drive info",
 			output: sdDriveInfoOutput,
-			device: "/dev/sdb",
 			want: DriveInfo{
-				Device:       "/dev/sdb",
 				Type:         "SD",
 				Manufacturer: "0x74 Transcend",
 				Product:      "USDU1",
@@ -181,7 +176,7 @@ func TestParseDriveInfo(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseDriveInfo(tt.output, tt.device)
+			got, err := ParseDriveInfo(tt.output)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -202,12 +197,14 @@ func TestParseSmartInfo(t *testing.T) {
 			name:   "SSD SMART attributes",
 			output: ssdSmartOutput,
 			check: map[string]float64{
-				"read_error_rate":        0,
+				"read_error_rate":           0,
 				"reallocated_sectors_count": 1,
-				"power_on_hours":         5520,
-				"remain_life_percentage": 100,
-				"enclosure_temperature":  26,
-				"crc_error_count":        8,
+				"power_on_hours":            5520,
+				"power_cycle_count":         664,
+				"sudden_power_count":        164,
+				"remain_life_percentage":    100,
+				"enclosure_temperature":     26,
+				"crc_error_count":           8,
 			},
 		},
 		{
@@ -245,6 +242,12 @@ func TestParseSmartInfo(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestParseSmartInfoEmpty(t *testing.T) {
+	if _, err := ParseSmartInfo("---------------- S.M.A.R.T Information ----------------\n"); err == nil {
+		t.Error("expected error for output without attributes")
 	}
 }
 

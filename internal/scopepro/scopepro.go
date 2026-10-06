@@ -2,16 +2,16 @@ package scopepro
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
-	"unicode"
+	"time"
 )
 
 // DriveInfo holds parsed drive identification data.
 type DriveInfo struct {
-	Device    string
 	Type      string // "SSD" or "SD"
 	Model     string
 	Firmware  string
@@ -25,21 +25,35 @@ type DriveInfo struct {
 
 // ScopePro executes the scopepro CLI and parses its output.
 type ScopePro struct {
-	path string
+	path    string
+	timeout time.Duration
 }
 
 // New creates a ScopePro executor. If path is empty, "scopepro" is used.
-func New(path string) *ScopePro {
+// Each CLI invocation is killed after timeout; zero means no timeout.
+func New(path string, timeout time.Duration) *ScopePro {
 	if path == "" {
 		path = "scopepro"
 	}
-	return &ScopePro{path: path}
+	return &ScopePro{path: path, timeout: timeout}
 }
 
 func (s *ScopePro) exec(ctx context.Context, args ...string) (string, error) {
+	if s.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.timeout)
+		defer cancel()
+	}
 	cmd := exec.CommandContext(ctx, s.path, args...)
+	// Stop waiting on stdout shortly after a timeout kill, even if a child
+	// process inherited the pipe.
+	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+			err = fmt.Errorf("%w: %s", err, strings.TrimSpace(string(exitErr.Stderr)))
+		}
 		return "", fmt.Errorf("scopepro %s: %w", strings.Join(args, " "), err)
 	}
 	return string(out), nil
@@ -51,7 +65,7 @@ func (s *ScopePro) DriveInfoQuery(ctx context.Context, device string) (*DriveInf
 	if err != nil {
 		return nil, err
 	}
-	return ParseDriveInfo(out, device)
+	return ParseDriveInfo(out)
 }
 
 // SmartInfo executes scopepro -smart and parses S.M.A.R.T attributes.
@@ -73,16 +87,10 @@ func (s *ScopePro) Health(ctx context.Context, device string) (float64, error) {
 }
 
 // ParseDriveInfo parses the output of scopepro -id.
-func ParseDriveInfo(output, device string) (*DriveInfo, error) {
-	info := &DriveInfo{Device: device}
-	lines := strings.Split(output, "\n")
+func ParseDriveInfo(output string) (*DriveInfo, error) {
+	info := &DriveInfo{}
 
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "---") {
-			continue
-		}
-
+	for _, line := range strings.Split(output, "\n") {
 		key, val, ok := cutField(line)
 		if !ok {
 			continue
@@ -116,66 +124,57 @@ func ParseDriveInfo(output, device string) (*DriveInfo, error) {
 }
 
 // ParseSmartInfo parses the output of scopepro -smart into attribute name→value pairs.
+// Non-numeric attributes are skipped. SD cards print "<name>: <value>" lines;
+// SSDs print "<id> <name> <value>" lines.
 func ParseSmartInfo(output string) (map[string]float64, error) {
 	attrs := make(map[string]float64)
-	lines := strings.Split(output, "\n")
 
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "---") || strings.HasPrefix(line, "S.M.A.R.T") {
-			continue
-		}
-
-		// Try SSD format: "<hex_id> <name> <value>" — hex ID followed by a space
-		if len(line) >= 3 && isHexByte(line[:2]) && line[2] == ' ' {
-			name, val := parseSSDSmartLine(line)
-			if name != "" {
-				attrs[NormalizeName(name)] = val
+	for _, line := range strings.Split(output, "\n") {
+		if key, val, ok := cutField(line); ok {
+			if f, err := parseValue(val); err == nil {
+				attrs[NormalizeName(key)] = f
 			}
 			continue
 		}
 
-		// Try SD format: "<name>: <value>"
-		key, val, ok := cutField(line)
-		if !ok {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || strings.HasPrefix(fields[0], "-") {
 			continue
 		}
-		val = strings.TrimSuffix(val, "%")
-		f, err := strconv.ParseFloat(val, 64)
-		if err != nil {
-			continue // skip non-numeric values
+		if f, err := parseValue(fields[len(fields)-1]); err == nil {
+			attrs[NormalizeName(strings.Join(fields[1:len(fields)-1], " "))] = f
 		}
-		attrs[NormalizeName(key)] = f
 	}
 
+	if len(attrs) == 0 {
+		return nil, fmt.Errorf("no S.M.A.R.T attributes found in output")
+	}
 	return attrs, nil
 }
 
 // ParseHealth parses the output of scopepro -health.
 func ParseHealth(output string) (float64, error) {
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
+	for _, line := range strings.Split(output, "\n") {
 		key, val, ok := cutField(line)
-		if !ok {
-			continue
-		}
-		if strings.ToLower(key) == "health percentage" {
-			val = strings.TrimSuffix(val, "%")
-			return strconv.ParseFloat(val, 64)
+		if ok && strings.ToLower(key) == "health percentage" {
+			return parseValue(val)
 		}
 	}
 	return 0, fmt.Errorf("health percentage not found in output")
 }
 
-// NormalizeName converts an attribute name to lowercase snake_case.
+// NormalizeName converts an attribute name to a valid Prometheus metric name
+// fragment: lowercase ASCII snake_case.
 func NormalizeName(s string) string {
 	var b strings.Builder
 	prev := '_'
 	for _, r := range s {
 		switch {
-		case unicode.IsLetter(r) || unicode.IsDigit(r):
-			b.WriteRune(unicode.ToLower(r))
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prev = r
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r + 'a' - 'A')
 			prev = r
 		default:
 			if prev != '_' {
@@ -187,47 +186,16 @@ func NormalizeName(s string) string {
 	return strings.TrimRight(b.String(), "_")
 }
 
-// cutField splits a line on ":" or " :" and returns trimmed key/value.
+// cutField splits a "key :value" or "key: value" line into trimmed key and value.
 func cutField(line string) (string, string, bool) {
-	// Try " :" separator first (ScopePro common format)
-	if key, val, ok := strings.Cut(line, " :"); ok {
-		return strings.TrimSpace(key), strings.TrimSpace(val), true
+	key, val, ok := strings.Cut(line, ":")
+	if !ok {
+		return "", "", false
 	}
-	// Try ":" separator (SD card format)
-	if key, val, ok := strings.Cut(line, ":"); ok {
-		return strings.TrimSpace(key), strings.TrimSpace(val), true
-	}
-	return "", "", false
+	return strings.TrimSpace(key), strings.TrimSpace(val), true
 }
 
-// isHexByte checks if s looks like a two-character hex byte (e.g., "01", "A9", "F1").
-func isHexByte(s string) bool {
-	if len(s) != 2 {
-		return false
-	}
-	for _, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')) {
-			return false
-		}
-	}
-	return true
-}
-
-// parseSSDSmartLine parses a line like "09 Power-On Hours 5520".
-// Returns the attribute name and its numeric value.
-func parseSSDSmartLine(line string) (string, float64) {
-	// Skip the hex ID prefix (2 chars + space)
-	rest := strings.TrimSpace(line[2:])
-	// The value is the last whitespace-separated field
-	lastSpace := strings.LastIndexFunc(rest, unicode.IsSpace)
-	if lastSpace < 0 {
-		return "", 0
-	}
-	name := strings.TrimSpace(rest[:lastSpace])
-	valStr := strings.TrimSpace(rest[lastSpace+1:])
-	f, err := strconv.ParseFloat(valStr, 64)
-	if err != nil {
-		return "", 0
-	}
-	return name, f
+// parseValue parses a numeric value, tolerating a trailing percent sign.
+func parseValue(s string) (float64, error) {
+	return strconv.ParseFloat(strings.TrimSuffix(s, "%"), 64)
 }
