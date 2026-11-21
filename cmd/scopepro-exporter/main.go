@@ -14,8 +14,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/raylas/scopepro-exporter/internal/collector"
-	"github.com/raylas/scopepro-exporter/internal/scopepro"
+	"go.rmdd.net/scopepro-exporter/internal/collector"
+	"go.rmdd.net/scopepro-exporter/internal/scopepro"
 )
 
 // version is set at build time via ldflags.

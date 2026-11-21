@@ -32,7 +32,8 @@
                 pname = "scopepro-exporter";
                 inherit version;
                 src = ./.;
-                vendorHash = "sha256-rTbaBWN0DWUg/tvpV+sTHPAfDFl0jwM/4HIFo/eV/jE=";
+                vendorHash = "sha256-8zjE8+1no3hvWd4rygoSmChYjQWUXKPb7q8zsgXoOV0=";
+                env.CGO_ENABLED = 0;
                 ldflags = [
                   "-s"
                   "-w"
@@ -52,12 +53,14 @@
               };
             };
 
-          devShell = pkgs.mkShell {
+          devShell = pkgs.mkShellNoCC {
             buildInputs = with pkgs; [
               go
               gopls
               golangci-lint-langserver
             ];
+
+            CGO_ENABLED = "0";
           };
         }
       );

@@ -9,7 +9,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
-	"github.com/raylas/scopepro-exporter/internal/scopepro"
+	"go.rmdd.net/scopepro-exporter/internal/scopepro"
 )
 
 type mockExecutor struct {

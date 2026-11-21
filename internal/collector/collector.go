@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/raylas/scopepro-exporter/internal/scopepro"
+	"go.rmdd.net/scopepro-exporter/internal/scopepro"
 )
 
 // Executor abstracts ScopePro CLI interactions for testability.

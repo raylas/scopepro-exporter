@@ -10,8 +10,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: cachix/install-nix-action@v31
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v32
       - run: nix develop --command go test ./...
 
   build-push:
@@ -28,8 +28,8 @@ jobs:
     permissions:
       packages: write
     steps:
-      - uses: actions/checkout@v6
-      - uses: cachix/install-nix-action@v31
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v32
       - run: |
           nix build .#image
           gunzip -c "$(readlink -f result)" > image.tar
@@ -48,7 +48,7 @@ jobs:
     permissions:
       packages: write
     steps:
-      - uses: cachix/install-nix-action@v31
+      - uses: cachix/install-nix-action@v32
       - run: |
           IMAGE=ghcr.io/${{ github.repository }}
           SHA=$(echo "${{ github.sha }}" | cut -c1-7)
@@ -68,10 +68,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - uses: goreleaser/goreleaser-action@v7
@@ -89,7 +89,7 @@ jobs:
     permissions:
       packages: write
     steps:
-      - uses: cachix/install-nix-action@v31
+      - uses: cachix/install-nix-action@v32
       - run: |
           IMAGE=ghcr.io/${{ github.repository }}
           TAG=${GITHUB_REF#refs/tags/}
